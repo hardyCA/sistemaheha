@@ -29,6 +29,18 @@ let currentDishId = "";
 let ingredientData = [];
 let dishData = [];
 
+// Función para mostrar mensajes de error
+const showError = (error) => {
+  alert(`Error: ${error.message}`);
+};
+
+// Función para mostrar mensajes de confirmación
+const showConfirmation = (message, callback) => {
+  if (confirm(message)) {
+    callback();
+  }
+};
+
 // Función para registrar ingrediente
 const addIngredient = async (e) => {
   e.preventDefault();
@@ -52,11 +64,11 @@ const addIngredient = async (e) => {
     alert("Ingrediente registrado con éxito");
     ingredientForm.reset();
   } catch (error) {
-    console.error("Error al añadir el ingrediente:", error);
+    showError(error);
   }
 };
 
-// Función para actualizar ingrediente
+// Función para actualizar ingrediente y actualizar platillos relacionados
 const updateIngredient = async (e) => {
   e.preventDefault();
 
@@ -76,7 +88,34 @@ const updateIngredient = async (e) => {
       porciones,
       costoPorPorcion,
     });
-    alert("Ingrediente actualizado con éxito");
+
+    const platillosSnapshot = await db.collection("platillos").get();
+    platillosSnapshot.forEach(async (doc) => {
+      const platillo = doc.data();
+      const ingredientesActualizados = platillo.ingredientes.map((ing) => {
+        if (ing.id === currentIngredientId) {
+          ing.costoPorPorcion = costoPorPorcion;
+        }
+        return ing;
+      });
+
+      const costoTotalIngredientes = ingredientesActualizados.reduce(
+        (total, ing) => {
+          const ingrediente = ingredientData.find((i) => i.id === ing.id);
+          return total + ingrediente.costoPorPorcion * ing.cantidad;
+        },
+        0
+      );
+      const ganancia = platillo.precioVenta - costoTotalIngredientes;
+
+      await db.collection("platillos").doc(doc.id).update({
+        costoTotalIngredientes,
+        ganancia,
+        ingredientes: ingredientesActualizados,
+      });
+    });
+
+    alert("Ingrediente y platillos relacionados actualizados con éxito");
     ingredientForm.reset();
     isEditing = false;
     currentIngredientId = "";
@@ -84,7 +123,7 @@ const updateIngredient = async (e) => {
     ingredientForm.removeEventListener("submit", updateIngredient);
     ingredientForm.addEventListener("submit", addIngredient);
   } catch (error) {
-    console.error("Error al actualizar el ingrediente:", error);
+    showError(error);
   }
 };
 
@@ -141,12 +180,17 @@ db.collection("ingredientes").onSnapshot((snapshot) => {
 
 // Eliminar ingrediente
 window.deleteIngredient = async (id) => {
-  try {
-    await db.collection("ingredientes").doc(id).delete();
-    alert("Ingrediente eliminado con éxito");
-  } catch (error) {
-    console.error("Error al eliminar el ingrediente:", error);
-  }
+  showConfirmation(
+    "¿Estás seguro de que deseas eliminar este ingrediente?",
+    async () => {
+      try {
+        await db.collection("ingredientes").doc(id).delete();
+        alert("Ingrediente eliminado con éxito");
+      } catch (error) {
+        showError(error);
+      }
+    }
+  );
 };
 
 // Editar ingrediente
@@ -174,6 +218,7 @@ const addDish = async (e) => {
   const nombrePlatillo = document.getElementById("nombrePlatillo").value;
   const precioVenta = parseFloat(document.getElementById("precioVenta").value);
   const selectedIngredients = [];
+  let costoTotalIngredientes = 0;
 
   ingredientData.forEach((ingredient) => {
     const isChecked = document.getElementById(
@@ -188,19 +233,24 @@ const addDish = async (e) => {
         id: ingredient.id,
         cantidad,
       });
+      costoTotalIngredientes += ingredient.costoPorPorcion * cantidad;
     }
   });
+
+  const ganancia = precioVenta - costoTotalIngredientes;
 
   try {
     await db.collection("platillos").add({
       nombre: nombrePlatillo,
       precioVenta,
+      costoTotalIngredientes,
+      ganancia,
       ingredientes: selectedIngredients,
     });
     alert("Platillo registrado con éxito");
     dishForm.reset();
   } catch (error) {
-    console.error("Error al añadir el platillo:", error);
+    showError(error);
   }
 };
 
@@ -223,6 +273,12 @@ db.collection("platillos").onSnapshot((snapshot) => {
     li.innerHTML = `
       <span>
         <strong>${dish.nombre}</strong> - ${dish.precioVenta} Bs
+        <br>
+        <small>Costo Total de Ingredientes: ${dish.costoTotalIngredientes.toFixed(
+          2
+        )} Bs</small>
+        <br>
+        <small>Ganancia: ${dish.ganancia.toFixed(2)} Bs</small>
         <br>
         <small>Ingredientes:</small>
         <ul>
@@ -262,12 +318,17 @@ db.collection("platillos").onSnapshot((snapshot) => {
 
 // Eliminar platillo
 window.deleteDish = async (id) => {
-  try {
-    await db.collection("platillos").doc(id).delete();
-    alert("Platillo eliminado con éxito");
-  } catch (error) {
-    console.error("Error al eliminar el platillo:", error);
-  }
+  showConfirmation(
+    "¿Estás seguro de que deseas eliminar este platillo?",
+    async () => {
+      try {
+        await db.collection("platillos").doc(id).delete();
+        alert("Platillo eliminado con éxito");
+      } catch (error) {
+        showError(error);
+      }
+    }
+  );
 };
 
 // Editar platillo
@@ -296,6 +357,7 @@ const updateDish = async (e) => {
   const nombrePlatillo = document.getElementById("nombrePlatillo").value;
   const precioVenta = parseFloat(document.getElementById("precioVenta").value);
   const selectedIngredients = [];
+  let costoTotalIngredientes = 0;
 
   ingredientData.forEach((ingredient) => {
     const isChecked = document.getElementById(
@@ -310,13 +372,18 @@ const updateDish = async (e) => {
         id: ingredient.id,
         cantidad,
       });
+      costoTotalIngredientes += ingredient.costoPorPorcion * cantidad;
     }
   });
+
+  const ganancia = precioVenta - costoTotalIngredientes;
 
   try {
     await db.collection("platillos").doc(currentDishId).update({
       nombre: nombrePlatillo,
       precioVenta,
+      costoTotalIngredientes,
+      ganancia,
       ingredientes: selectedIngredients,
     });
     alert("Platillo actualizado con éxito");
@@ -328,7 +395,7 @@ const updateDish = async (e) => {
     dishForm.removeEventListener("submit", updateDish);
     dishForm.addEventListener("submit", addDish);
   } catch (error) {
-    console.error("Error al actualizar el platillo:", error);
+    showError(error);
   }
 };
 
@@ -368,7 +435,7 @@ const addSale = async (e) => {
     alert("Venta registrada con éxito");
     saleForm.reset();
   } catch (error) {
-    console.error("Error al registrar la venta:", error);
+    showError(error);
   }
 };
 
@@ -441,12 +508,17 @@ db.collection("ventas").onSnapshot((snapshot) => {
 
 // Eliminar venta
 window.deleteSale = async (id) => {
-  try {
-    await db.collection("ventas").doc(id).delete();
-    alert("Venta eliminada con éxito");
-  } catch (error) {
-    console.error("Error al eliminar la venta:", error);
-  }
+  showConfirmation(
+    "¿Estás seguro de que deseas eliminar esta venta?",
+    async () => {
+      try {
+        await db.collection("ventas").doc(id).delete();
+        alert("Venta eliminada con éxito");
+      } catch (error) {
+        showError(error);
+      }
+    }
+  );
 };
 
 // Inicializar el evento de añadir venta
